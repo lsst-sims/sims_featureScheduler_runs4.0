@@ -1,14 +1,10 @@
-import numpy as np
-import healpy as hp
-from rubin_scheduler.utils import (
-    _hpid2_ra_dec,
-    _angular_separation,
-)
-from rubin_scheduler.scheduler.utils import (
-    SimTargetooServer,
-)
 import sqlite3
+
+import healpy as hp
+import numpy as np
 import pandas as pd
+from rubin_scheduler.scheduler.utils import SimTargetooServer
+from rubin_scheduler.utils import _angular_separation, _hpid2_ra_dec
 
 
 # XXX--adding stuff that should be merged back in eventually

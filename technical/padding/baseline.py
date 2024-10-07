@@ -1,4 +1,15 @@
-#!/usr/bin/env python
+__all__ = (
+    "example_scheduler",
+    "sched_argparser",
+    "set_run_info",
+    "run_sched",
+    "gen_long_gaps_survey",
+    "gen_greedy_surveys",
+    "generate_blobs",
+    "generate_twi_blobs",
+    "generate_twilight_near_sun",
+    "standard_bf",
+)
 
 import argparse
 import os
@@ -6,7 +17,6 @@ import subprocess
 import sys
 
 import healpy as hp
-import matplotlib.pylab as plt
 import numpy as np
 import rubin_scheduler
 import rubin_scheduler.scheduler.basis_functions as bf
@@ -22,10 +32,10 @@ from rubin_scheduler.scheduler.surveys import (
     GreedySurvey,
     LongGapSurvey,
     ScriptedSurvey,
-    generate_ddf_scheduled_obs,
     gen_roman_off_season,
     gen_roman_on_season,
     gen_too_surveys,
+    generate_ddf_scheduled_obs,
 )
 from rubin_scheduler.scheduler.utils import (
     ConstantFootprint,
@@ -33,7 +43,7 @@ from rubin_scheduler.scheduler.utils import (
     make_rolling_footprints,
 )
 from rubin_scheduler.site_models import Almanac
-from rubin_scheduler.utils import _hpid2_ra_dec
+from rubin_scheduler.utils import DEFAULT_NSIDE, SURVEY_START_MJD, _hpid2_ra_dec
 
 from gen_events import gen_all_events
 
@@ -41,6 +51,34 @@ from gen_events import gen_all_events
 iers.conf.auto_download = False
 # XXX--note this line probably shouldn't be in production
 iers.conf.auto_max_age = None
+
+
+def example_scheduler(
+    nside: int = DEFAULT_NSIDE, mjd_start: float = SURVEY_START_MJD
+) -> CoreScheduler:
+    """Provide an example baseline survey-strategy scheduler.
+
+    Parameters
+    ----------
+    nside : `int`
+        Nside for the scheduler maps and basis functions.
+    mjd_start : `float`
+        Start date for the survey (MJD).
+
+    Returns
+    -------
+    scheduler : `rubin_scheduler.scheduler.CoreScheduler`
+        A scheduler set up as the baseline survey strategy.
+    """
+    parser = sched_argparser()
+    args = parser.parse_args(args=[])
+    args.setup_only = True
+    args.dbroot = "example_"
+    args.outDir = "."
+    args.nside = nside
+    args.mjd_start = mjd_start
+    scheduler = gen_scheduler(args)
+    return scheduler
 
 
 def standard_bf(
@@ -402,10 +440,7 @@ def blob_for_long(
         bfs.append(
             (
                 bf.AltAzShadowMaskBasisFunction(
-                    nside=nside,
-                    shadow_minutes=shadow_minutes,
-                    max_alt=max_alt,
-                    pad=0.
+                    nside=nside, shadow_minutes=shadow_minutes, max_alt=max_alt, pad=0.0
                 ),
                 0.0,
             )
@@ -417,7 +452,9 @@ def blob_for_long(
         bfs.append((bf.TimeToTwilightBasisFunction(time_needed=time_needed), 0.0))
         bfs.append((bf.NotTwilightBasisFunction(), 0.0))
         bfs.append((bf.AfterEveningTwiBasisFunction(time_after=time_after_twi), 0.0))
-        bfs.append((bf.HaMaskBasisFunction(ha_min=HA_min, ha_max=HA_max, nside=nside), 0.0))
+        bfs.append(
+            (bf.HaMaskBasisFunction(ha_min=HA_min, ha_max=HA_max, nside=nside), 0.0)
+        )
         # don't execute every night
         bfs.append((bf.NightModuloBasisFunction(night_pattern), 0.0))
         # only execute one blob per night
@@ -615,8 +652,7 @@ def gen_greedy_surveys(
         bfs.append(
             (
                 bf.AltAzShadowMaskBasisFunction(
-                    nside=nside, shadow_minutes=shadow_minutes, max_alt=max_alt,
-                    pad=3.
+                    nside=nside, shadow_minutes=shadow_minutes, max_alt=max_alt, pad=3.0
                 ),
                 0,
             )
@@ -835,10 +871,7 @@ def generate_blobs(
         bfs.append(
             (
                 bf.AltAzShadowMaskBasisFunction(
-                    nside=nside,
-                    shadow_minutes=shadow_minutes,
-                    max_alt=max_alt,
-                    pad=0.
+                    nside=nside, shadow_minutes=shadow_minutes, max_alt=max_alt, pad=0.0
                 ),
                 0.0,
             )
@@ -1409,36 +1442,35 @@ def run_sched(
     return observatory, scheduler, observations
 
 
-def example_scheduler(args):
+def gen_scheduler(args):
     survey_length = args.survey_length  # Days
     out_dir = args.out_dir
     verbose = args.verbose
-    max_dither = args.maxDither
-    illum_limit = args.moon_illum_limit
     nexp = args.nexp
-    nslice = args.rolling_nslice
-    rolling_scale = args.rolling_strength
     dbroot = args.dbroot
-    nights_off = args.nights_off
-    neo_night_pattern = args.neo_night_pattern
-    neo_filters = args.neo_filters
-    neo_repeat = args.neo_repeat
-    ddf_season_frac = args.ddf_season_frac
-    neo_am = args.neo_am
-    neo_elong_req = args.neo_elong_req
-    neo_area_req = args.neo_area_req
     nside = args.nside
     mjd_plus = args.mjd_plus
-    temp_uniform = args.temp_uniform
     split_long = args.split_long
     too = args.too
 
+    max_dither = 0.7  # Degrees. For DDFs
+    ddf_season_frac = 0.2  # Amount of season to use for DDFs
+    illum_limit = 40.0  # Percent. Lunar illumination
     u_exptime = 38.0
+    nslice = 2  # N slices for rolling
+    rolling_scale = 0.9  # Strength of rolling
+    rolling_uniform = True  # Should we use the uniform rolling flag
+    nights_off = 3  # For long gaps
+    neo_night_pattern = 4
+    neo_filters = "riz"
+    neo_repeat = 4
+    neo_am = 2.5  # NEO airmass limit
+    neo_elong_req = 45.0  # Solar elongation required for inner solar system
+    neo_area_req = 0.0  # Sky area required before attempting inner solar system
 
     # Be sure to also update and regenerate DDF grid save file if changing mjd_start
-    mjd_start = 60796.0 + mjd_plus
+    mjd_start = SURVEY_START_MJD + mjd_plus
     per_night = True  # Dither DDF per night
-
     camera_ddf_rot_limit = 75.0  # degrees
 
     fileroot, extra_info = set_run_info(
@@ -1501,7 +1533,7 @@ def example_scheduler(args):
         wfd_indx=wfd_indx,
         order_roll=1,
         n_cycles=3,
-        uniform=temp_uniform,
+        uniform=rolling_uniform,
     )
 
     gaps_night_pattern = [True] + [False] * nights_off
@@ -1637,70 +1669,9 @@ def sched_argparser():
     )
     parser.add_argument("--out_dir", type=str, default="", help="Output directory")
     parser.add_argument(
-        "--maxDither", type=float, default=0.7, help="Dither size for DDFs (deg)"
-    )
-    parser.add_argument(
-        "--moon_illum_limit",
-        type=float,
-        default=40.0,
-        help="illumination limit to remove u-band",
-    )
-    parser.add_argument(
         "--nexp", type=int, default=2, help="Number of exposures per visit"
     )
-    parser.add_argument(
-        "--rolling_nslice",
-        type=int,
-        default=2,
-        help="Number of independent rolling stripes",
-    )
-    parser.add_argument(
-        "--rolling_strength",
-        type=float,
-        default=0.9,
-        help="Rolling strength between 0-1",
-    )
     parser.add_argument("--dbroot", type=str, help="Database root")
-    parser.add_argument(
-        "--ddf_season_frac",
-        type=float,
-        default=0.2,
-        help="How much of season to use for DDFs",
-    )
-    parser.add_argument("--nights_off", type=int, default=3, help="For long gaps")
-    parser.add_argument(
-        "--neo_night_pattern",
-        type=int,
-        default=4,
-        help="Which night pattern to use for inner solar system",
-    )
-    parser.add_argument(
-        "--neo_filters", type=str, default="riz", help="Filters for inner solar system"
-    )
-    parser.add_argument(
-        "--neo_repeat",
-        type=int,
-        default=4,
-        help="Number of repeat visits for inner solar system",
-    )
-    parser.add_argument(
-        "--neo_am",
-        type=float,
-        default=2.5,
-        help="Airmass limit for twilight NEO visits",
-    )
-    parser.add_argument(
-        "--neo_elong_req",
-        type=float,
-        default=45.0,
-        help="Solar elongation required for inner solar system",
-    )
-    parser.add_argument(
-        "--neo_area_req",
-        type=float,
-        default=30.0,
-        help="Sky area required before attempting inner solar system",
-    )
     parser.add_argument(
         "--setup_only",
         dest="setup_only",
@@ -1711,24 +1682,24 @@ def sched_argparser():
     parser.add_argument(
         "--nside",
         type=int,
-        default=32,
+        default=DEFAULT_NSIDE,
         help="Nside should be set to default (32) except for tests.",
     )
-
     parser.add_argument(
         "--mjd_plus",
         type=float,
         default=0,
         help="number of days to add to the mjd start",
     )
-
-    parser.add_argument("--temp_uniform", type=int, default=1)
-
-    parser.add_argument("--split_long", dest="split_long", action="store_true")
+    parser.add_argument(
+        "--split_long",
+        dest="split_long",
+        action="store_true",
+        help="Split long ToO exposures into standard visit lengths",
+    )
     parser.set_defaults(split_long=False)
-
-    parser.add_argument("--no_too", dest="too", action="store_false")
-    parser.set_defaults(too=True)
+    parser.add_argument("--too", dest="too", action="store_true")
+    parser.set_defaults(too=False)
 
     return parser
 
@@ -1736,4 +1707,4 @@ def sched_argparser():
 if __name__ == "__main__":
     parser = sched_argparser()
     args = parser.parse_args()
-    example_scheduler(args)
+    gen_scheduler(args)
